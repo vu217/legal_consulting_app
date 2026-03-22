@@ -148,13 +148,21 @@ async function main() {
 
   copyRootPdfsToBackend();
 
-  console.log("[dev] incremental PDF sync …");
-  try {
-    execSync(`"${py}" -m app.core.sync_incremental`, { cwd: backend, stdio: "inherit" });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.warn("[dev] sync_incremental exited with error (Qdrant/Ollama may still be starting):", msg);
-  }
+  // Spawn sync in the background so Vite (and the UI) are not blocked.
+  console.log("[dev] incremental PDF sync starting in background …");
+  const syncProc = spawn(py, ["-m", "app.core.sync_incremental"], {
+    cwd: backend,
+    stdio: "inherit",
+    shell: false,
+  });
+  children.push(syncProc);
+  syncProc.on("exit", (code) => {
+    if (code === 0 || code === null) {
+      console.log("[dev] incremental PDF sync finished.");
+    } else {
+      console.warn(`[dev] incremental PDF sync exited with code ${code} — check Ollama / Qdrant.`);
+    }
+  });
 
   const vite = spawn(npmCmd, ["run", "dev"], {
     cwd: frontend,

@@ -198,7 +198,7 @@ def _run_combined_analysis(query: str, docs: list) -> dict:
         model=_FAST_MODEL,
         num_predict=1200,
         temperature=0.3,
-        num_ctx=4096,
+        num_ctx=2048,
         num_gpu=get_ollama_num_gpu(),
     )
     response = fast_llm.invoke(prompt)
@@ -247,7 +247,7 @@ Be direct, specific, and actionable. Write for a client who needs clarity."""
         model=settings.LLM_MODEL,
         num_predict=700,
         temperature=0.4,
-        num_ctx=4096,
+        num_ctx=2048,
         num_gpu=get_ollama_num_gpu(),
     )
     response = r1_llm.invoke(prompt)

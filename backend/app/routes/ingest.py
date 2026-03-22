@@ -9,7 +9,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from app import settings
 from app.core.ingestion import ingest_pdf
-from app.core.sync_incremental import sync_pdfs_incremental
+from app.core.sync_incremental import _file_sha256, _load_manifest, _save_manifest, sync_pdfs_incremental
 from app.debug_session_log import debug_log
 
 router = APIRouter(tags=["ingest"])
@@ -54,6 +54,15 @@ async def ingest_upload(file: UploadFile = File(...)) -> dict:
         content = await file.read()
         dest.write_bytes(content)
         n = ingest_pdf(str(dest))
+        # Keep manifest in sync so this file is skipped on the next startup sync.
+        key = str(dest.resolve())
+        manifest = _load_manifest()
+        manifest[key] = {
+            "sha256": _file_sha256(dest),
+            "chunks": n,
+            "mtime": dest.stat().st_mtime,
+        }
+        _save_manifest(manifest)
         return {"file": str(dest), "chunks": n, "status": "ok"}
     except Exception as e:
         if dest.exists():

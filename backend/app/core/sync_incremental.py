@@ -56,18 +56,21 @@ def sync_pdfs_incremental() -> dict:
         digest = _file_sha256(pdf)
         prev = manifest.get(key, {})
         if isinstance(prev, dict) and prev.get("sha256") == digest:
+            reason = "unchanged_error" if "last_error" in prev else "unchanged"
             results.append(
                 {
                     "file": key,
                     "status": "skipped",
                     "chunks": prev.get("chunks", 0),
-                    "reason": "unchanged",
+                    "reason": reason,
                 }
             )
             continue
         to_run.append((pdf, digest, key))
 
-    # Sequential ingest avoids Qdrant / manifest races
+    # Sequential ingest avoids Qdrant / manifest races.
+    # Manifest is written after EACH pdf so a mid-run crash (e.g. CUDA OOM) does not
+    # discard progress already completed.
     for pdf, digest, key in to_run:
         r = ingest_single_pdf(str(pdf), replace_existing=True)
         results.append(r)
@@ -79,8 +82,16 @@ def sync_pdfs_incremental() -> dict:
             }
         elif r.get("status") == "skipped":
             manifest[key] = {"sha256": digest, "chunks": 0, "mtime": pdf.stat().st_mtime}
-
-    _save_manifest(manifest)
+        else:
+            # Record the error so the same unchanged file is not retried every startup.
+            # The entry is cleared and retried if the file content changes.
+            manifest[key] = {
+                "sha256": digest,
+                "chunks": 0,
+                "mtime": pdf.stat().st_mtime,
+                "last_error": r.get("reason", "unknown"),
+            }
+        _save_manifest(manifest)
     skipped_count = sum(1 for r in results if r.get("status") == "skipped" and r.get("reason") == "unchanged")
     err_statuses = [r.get("status") for r in results if r.get("status") == "error"]
     # region agent log
