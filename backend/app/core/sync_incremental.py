@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app import settings
 from app.core.ingestion import ingest_single_pdf
+from app.debug_session_log import debug_log
 
 
 def _load_manifest() -> dict:
@@ -39,6 +40,14 @@ def sync_pdfs_incremental() -> dict:
     settings.PDF_DIR.mkdir(parents=True, exist_ok=True)
     manifest = _load_manifest()
     pdf_files = sorted(settings.PDF_DIR.glob("*.pdf"))
+    # region agent log
+    debug_log(
+        "H5",
+        "sync_incremental.py:sync_pdfs_incremental",
+        "sync_start",
+        {"pdf_count": len(pdf_files), "manifest_keys": len(manifest)},
+    )
+    # endregion
     results: list[dict] = []
     to_run: list[tuple[Path, str, str]] = []
 
@@ -73,6 +82,19 @@ def sync_pdfs_incremental() -> dict:
 
     _save_manifest(manifest)
     skipped_count = sum(1 for r in results if r.get("status") == "skipped" and r.get("reason") == "unchanged")
+    err_statuses = [r.get("status") for r in results if r.get("status") == "error"]
+    # region agent log
+    debug_log(
+        "H5",
+        "sync_incremental.py:sync_pdfs_incremental",
+        "sync_end",
+        {
+            "ingested_or_attempted": len(to_run),
+            "skipped_unchanged": skipped_count,
+            "error_count": len(err_statuses),
+        },
+    )
+    # endregion
     return {
         "pdf_dir": str(settings.PDF_DIR),
         "ingested_or_attempted": len(to_run),

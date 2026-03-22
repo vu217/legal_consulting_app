@@ -1,28 +1,29 @@
 # legal_consulting_app
 
-Local legal RAG stack: **React (Vite)** frontend, **FastAPI** backend, **Qdrant** (Docker), **Ollama** on the host.
+Local legal RAG stack: **React (Vite)** in `frontend/`, **FastAPI** in `backend/`, **Qdrant** via Docker, **Ollama** on the host.
 
 ## Quick start
 
-1. Create a virtualenv at the repo root and install backend deps:
-
-   `python -m venv .venv` then  
+1. **Python:** `python -m venv .venv` at the repo root, then  
    `.venv\Scripts\pip install -r backend\requirements.txt` (Windows) or  
    `.venv/bin/pip install -r backend/requirements.txt` (macOS/Linux).
 
-2. Install root + frontend deps: `npm install` in `frontend/` (or rely on `npm run dev`, which installs `frontend` if needed).
+2. **Run everything** from the repo root: **`npm run dev`**  
+   - Starts **Docker Compose** (Qdrant), **FastAPI** on **http://localhost:8000**, incremental ingest for **`backend/pdfs/`**, **Vite** on **http://localhost:5173**.  
+   - If `frontend/node_modules` is missing, the script installs frontend deps first.
 
-3. From the repo root: **`npm run dev`**
+3. **Ollama** must be running with models from `.env` (e.g. `nomic-embed-text`, `deepseek-r1:8b`, `llama3.1:8b`). Use **`OLLAMA_USE_CPU=1`** in `.env` if GPU/CUDA fails.
 
-   This starts **Docker Compose** (Qdrant), the **FastAPI** app on port **8000**, runs **incremental PDF ingest** for `backend/pdfs/` (and copies any `pdfs/*.pdf` from the repo root into `backend/pdfs` once), then **Vite** on **http://localhost:5173**.
+## Repo layout
 
-4. Ensure **Ollama** is running with models matching `.env` (e.g. `nomic-embed-text`, `deepseek-r1:8b`, `llama3.1:8b`). Optional: `OLLAMA_USE_CPU=1` in `.env` if GPU/CUDA fails.
+| Path | Purpose |
+|------|---------|
+| `frontend/` | React app; API base URL via `VITE_API_BASE` (see `frontend/.env.example`). |
+| `backend/app/` | FastAPI app: `main.py`, `settings.py`, `routes/`, `core/` (RAG, ingest, chunker). |
+| `backend/pdfs/` | Drop PDFs here for ingestion (or upload in the UI). |
+| `backend/data/` | Ingest manifest (generated; gitignored). |
+| `scripts/dev.js` | One-command dev orchestration (`npm run dev`). |
+| `docker-compose.yml` | Qdrant service; data in `qdrant_storage/`. |
+| `.env` | Repo root; loaded by `backend/app/settings.py`. |
 
-## Layout
-
-- `frontend/` — React UI (calls `/api/*` on the backend).
-- `backend/app/` — FastAPI + RAG pipeline (`core/master_agent.py`, ingestion, sync manifest under `backend/data/`).
-- `dashboard.py` — legacy Streamlit UI (optional).
-- Root `docker-compose.yml` — Qdrant only.
-
-Override API URL in the browser build with `VITE_API_BASE` (see `frontend/.env.example`).
+Optional: if you keep a root `pdfs/` folder, `npm run dev` copies any new `.pdf` files into `backend/pdfs` once.

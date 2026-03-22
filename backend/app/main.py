@@ -2,13 +2,35 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import settings
+from app.debug_session_log import debug_log
 from app.routes import analysis, health, ingest
 
-app = FastAPI(title="Legal AI API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # region agent log
+    debug_log(
+        "H1",
+        "main.py:lifespan",
+        "fastapi_startup",
+        {
+            "api_prefix": settings.API_PREFIX,
+            "collection": settings.COLLECTION,
+            "pdf_dir_set": bool(str(settings.PDF_DIR)),
+            "qdrant_url_len": len(settings.QDRANT_URL or ""),
+        },
+    )
+    # endregion
+    yield
+
+
+app = FastAPI(title="Legal AI API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

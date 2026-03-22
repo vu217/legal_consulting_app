@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from qdrant_client import QdrantClient
 
 from app import settings
+from app.debug_session_log import debug_log
 
 router = APIRouter(tags=["health"])
 
@@ -61,15 +62,39 @@ def health_dependencies() -> dict[str, Any]:
     except Exception as e:
         out["ollama_error"] = str(e)
 
+    # region agent log
+    debug_log(
+        "H2",
+        "health.py:health_dependencies",
+        "deps_snapshot",
+        {
+            "qdrant_ok": out.get("qdrant_ok"),
+            "collection_exists": out.get("collection_exists"),
+            "ollama_ok": out.get("ollama_ok"),
+            "models_present": out.get("models_present"),
+            "has_qdrant_error": "qdrant_error" in out,
+            "has_ollama_error": "ollama_error" in out,
+        },
+    )
+    # endregion
     return out
 
 
 @router.get("/config")
 def public_config() -> dict[str, str]:
-    return {
+    cfg = {
         "qdrant_url": settings.QDRANT_URL,
         "collection": settings.COLLECTION,
         "llm_model": settings.LLM_MODEL,
         "fast_llm_model": settings.FAST_LLM_MODEL,
         "embed_model": settings.EMBED_MODEL,
     }
+    # region agent log
+    debug_log(
+        "H4",
+        "health.py:public_config",
+        "config_served",
+        {"collection": settings.COLLECTION, "llm_model": settings.LLM_MODEL},
+    )
+    # endregion
+    return cfg

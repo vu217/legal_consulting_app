@@ -19,6 +19,24 @@ const py = isWin
 
 const npmCmd = isWin ? "npm.cmd" : "npm";
 
+function debugDevLog(message, data) {
+  try {
+    const line =
+      JSON.stringify({
+        sessionId: "bfe8eb",
+        runId: "pre-fix",
+        hypothesisId: "H0",
+        location: "scripts/dev.js",
+        message,
+        data: data || {},
+        timestamp: Date.now(),
+      }) + "\n";
+    fs.appendFileSync(path.join(root, "debug-bfe8eb.log"), line, { encoding: "utf8" });
+  } catch {
+    /* ignore */
+  }
+}
+
 function waitPort(port, host = "127.0.0.1", timeoutMs = 90000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
@@ -76,6 +94,7 @@ function ensureBackendDeps() {
 }
 
 async function main() {
+  debugDevLog("npm_run_dev_enter", { root });
   const children = [];
 
   const killAll = () => {
