@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { analyzeCase, fetchConfig, ingestUpload } from "./api";
-import type { AnalysisResult, PublicConfig } from "./types";
+import { useCallback, useRef, useState } from "react";
+import { analyzeCaseStream } from "./api";
+import type { AnalysisUiState } from "./components/StatusPanel";
+import { StatusPanel } from "./components/StatusPanel";
 import { OutcomeBarChart } from "./components/OutcomeBarChart";
 import { ProbCompareChart } from "./components/ProbCompareChart";
 import { WinGauge } from "./components/WinGauge";
+import { PHASE_STATUS, formatTimeNote, phaseToStep } from "./statusCopy";
+import type { AnalysisResult } from "./types";
 import "./App.css";
 
 function OutcomeBadge({ outcome }: { outcome: string }) {
@@ -17,58 +20,129 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
   return <span className="badge-unk">{outcome || "unknown"}</span>;
 }
 
+const initialAnalysis: AnalysisUiState = {
+  running: false,
+  pct: 0,
+  completedSteps: 0,
+  pulsingStep: null,
+  statusText: "",
+  timeNote: "",
+};
+
 export default function App() {
-  const [cfg, setCfg] = useState<PublicConfig | null>(null);
-  const [cfgErr, setCfgErr] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [analysisUi, setAnalysisUi] = useState<AnalysisUiState>(initialAnalysis);
   const [err, setErr] = useState<string | null>(null);
-  const [files, setFiles] = useState<FileList | null>(null);
-  const [ingestBusy, setIngestBusy] = useState(false);
-  const [ingestLog, setIngestLog] = useState<string[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
+  const t0Ref = useRef(0);
 
-  useEffect(() => {
-    fetchConfig()
-      .then(setCfg)
-      .catch((e: Error) => setCfgErr(e.message));
+  const onCancelAnalysis = useCallback(() => {
+    abortRef.current?.abort();
   }, []);
 
   const run = useCallback(async () => {
     const q = query.trim();
     if (!q) return;
-    setLoading(true);
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    t0Ref.current = Date.now();
     setErr(null);
+    setAnalysisUi({
+      running: true,
+      pct: 5,
+      completedSteps: 0,
+      pulsingStep: 0,
+      statusText: PHASE_STATUS.retrieve_start,
+      timeNote: formatTimeNote(0),
+    });
+
+    let outcome;
     try {
-      const r = await analyzeCase(q);
-      setResult(r);
+      outcome = await analyzeCaseStream(
+      q,
+      (msg) => {
+        if (msg.type !== "progress") return;
+        const phase = msg.phase;
+        const elapsed = (Date.now() - t0Ref.current) / 1000;
+        if (phase === "phase_error") {
+          const fp = String(msg.failed_phase || "");
+          const detail = String(msg.detail || "").slice(0, 140);
+          const map: Record<string, string> = {
+            retrieve: `Finding cases failed: ${detail}`,
+            fast_llm: `Organizing the answer failed: ${detail}`,
+            summary_llm: `Writing the summary failed: ${detail}`,
+          };
+          setAnalysisUi((prev) => ({
+            ...prev,
+            statusText: map[fp] || `Something went wrong: ${detail}`,
+          }));
+          return;
+        }
+        const { pct } = phaseToStep(phase);
+        let completedSteps = 0;
+        let pulsingStep: number | null = 0;
+        switch (phase) {
+          case "retrieve_start":
+            completedSteps = 0;
+            pulsingStep = 0;
+            break;
+          case "retrieve_done":
+            completedSteps = 1;
+            pulsingStep = 1;
+            break;
+          case "fast_llm_start":
+            completedSteps = 1;
+            pulsingStep = 1;
+            break;
+          case "fast_llm_done":
+            completedSteps = 2;
+            pulsingStep = 2;
+            break;
+          case "summary_llm_start":
+            completedSteps = 2;
+            pulsingStep = 2;
+            break;
+          case "summary_llm_done":
+            completedSteps = 3;
+            pulsingStep = null;
+            break;
+          default:
+            return;
+        }
+        setAnalysisUi((prev) => ({
+          ...prev,
+          pct: Math.max(prev.pct, pct),
+          completedSteps: Math.max(prev.completedSteps, completedSteps),
+          pulsingStep,
+          statusText: PHASE_STATUS[phase] ?? prev.statusText,
+          timeNote: formatTimeNote(elapsed),
+        }));
+      },
+      ac.signal,
+    );
     } catch (e) {
+      setAnalysisUi((prev) => ({ ...prev, running: false, pulsingStep: null }));
       setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
+      return;
+    }
+
+    setAnalysisUi((prev) => ({
+      ...prev,
+      running: false,
+      pulsingStep: null,
+      pct: outcome.status === "complete" ? 100 : prev.pct,
+    }));
+
+    if (outcome.status === "complete") {
+      setResult(outcome.result);
+    } else if (outcome.status === "cancelled") {
+      setErr(null);
+    } else {
+      setErr(outcome.message);
     }
   }, [query]);
-
-  const onIngest = async () => {
-    if (!files?.length) return;
-    setIngestBusy(true);
-    setIngestLog([]);
-    const lines: string[] = [];
-    try {
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        try {
-          const r = await ingestUpload(f);
-          lines.push(`${f.name}: ${r.chunks} chunks`);
-        } catch (e) {
-          lines.push(`${f.name}: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-      setIngestLog(lines);
-    } finally {
-      setIngestBusy(false);
-    }
-  };
 
   const similar = result?.precedent?.similar_cases ?? [];
   const statutesRaw = result?.statute?.statutes_raw ?? [];
@@ -77,52 +151,11 @@ export default function App() {
 
   return (
     <div className="layout">
-      <aside className="sidebar">
-        <h2>LegalMind</h2>
-        <p style={{ fontSize: 13, marginTop: 0 }}>100% local · DeepSeek R1 · Qdrant</p>
-        <hr style={{ borderColor: "var(--border-soft)", margin: "1rem 0" }} />
-        <h3>Index PDFs</h3>
-        <input
-          type="file"
-          accept="application/pdf"
-          multiple
-          onChange={(e) => setFiles(e.target.files)}
-        />
-        <button type="button" className="secondary" style={{ marginTop: 8 }} onClick={onIngest} disabled={!files?.length || ingestBusy}>
-          {ingestBusy ? "Indexing…" : "Ingest selected PDFs"}
-        </button>
-        {ingestLog.length > 0 && (
-          <div className="upload-list">
-            {ingestLog.map((l, i) => (
-              <div key={i}>{l}</div>
-            ))}
-          </div>
-        )}
-        <hr style={{ borderColor: "var(--border-soft)", margin: "1rem 0" }} />
-        <h3>Model</h3>
-        {cfgErr && <p style={{ color: "#f87171", fontSize: 12 }}>{cfgErr}</p>}
-        {cfg && (
-          <>
-            <p style={{ fontSize: 12, margin: "0.25rem 0" }}>
-              LLM: <code style={{ color: "var(--body)" }}>{cfg.llm_model}</code>
-            </p>
-            <p style={{ fontSize: 12, margin: "0.25rem 0" }}>
-              Embeddings: <code style={{ color: "var(--body)" }}>{cfg.embed_model}</code>
-            </p>
-            <p style={{ fontSize: 12, margin: "0.25rem 0" }}>
-              Vector DB: <code style={{ color: "var(--body)" }}>{cfg.qdrant_url}</code>
-            </p>
-          </>
-        )}
-        <hr style={{ borderColor: "var(--border-soft)", margin: "1rem 0" }} />
-        <p style={{ fontSize: 11, opacity: 0.85 }}>All inference runs locally. No data leaves your machine.</p>
-      </aside>
+      <StatusPanel analysis={analysisUi} onCancelAnalysis={onCancelAnalysis} />
 
       <main className="main">
         <h1>Case Intelligence Dashboard</h1>
-        <p className="sub">
-          Describe your case below. The system runs specialist analysis and synthesises the results.
-        </p>
+        <p className="sub">Describe your case below. The system runs specialist analysis and synthesises the results.</p>
 
         <textarea
           className="query"
@@ -131,10 +164,10 @@ export default function App() {
           onChange={(e) => setQuery(e.target.value)}
         />
         <div className="row-actions">
-          <button type="button" className="primary" onClick={run} disabled={loading || !query.trim()}>
-            {loading ? "Running…" : "Run analysis"}
+          <button type="button" className="primary" onClick={() => void run()} disabled={analysisUi.running || !query.trim()}>
+            {analysisUi.running ? "Running…" : "Run analysis"}
           </button>
-          <span className="hint">Requires Ollama and indexed PDFs for best results.</span>
+          <span className="hint">Works best with PDFs added in the sidebar and your local AI running.</span>
         </div>
         {err && <div className="err">{err}</div>}
 
@@ -260,12 +293,12 @@ export default function App() {
           </>
         )}
 
-        {!result && !loading && (
+        {!result && !analysisUi.running && (
           <div className="empty-state">
             <div className="icon">⚖</div>
             <div style={{ fontSize: 18, fontWeight: 500, color: "var(--body)", marginBottom: 8 }}>No case loaded yet</div>
             <div style={{ fontSize: 14 }}>
-              Upload PDFs in the sidebar to build your knowledge base,
+              Add PDFs in the sidebar to build your knowledge base,
               <br />
               then describe your case above to run the analysis.
             </div>

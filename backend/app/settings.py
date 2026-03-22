@@ -26,4 +26,6 @@ FAST_LLM_MODEL = os.getenv("FAST_LLM_MODEL", "llama3.1:8b")
 PDF_DIR = Path(os.getenv("PDF_DIR", str(BACKEND_DIR / "pdfs"))).resolve()
 MANIFEST_PATH = (BACKEND_DIR / "data" / "ingestion_manifest.json").resolve()
 
-API_PREFIX = os.getenv("API_PREFIX", "/api")
+# Empty API_PREFIX in .env would mount routes at "" while the UI expects /api — normalize to /api.
+_api_prefix_raw = os.getenv("API_PREFIX", "/api").strip()
+API_PREFIX = _api_prefix_raw if _api_prefix_raw else "/api"

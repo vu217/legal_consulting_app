@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,7 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import settings
 from app.debug_session_log import debug_log
-from app.routes import analysis, health, ingest
+from app.routes import analysis, health, ingest, stats
+
+
+_log = logging.getLogger("uvicorn.error")
 
 
 @asynccontextmanager
@@ -27,6 +31,9 @@ async def lifespan(app: FastAPI):
         },
     )
     # endregion
+    pfx = settings.API_PREFIX.rstrip("/") or ""
+    mount = f"{pfx}/" if pfx else "/"
+    _log.info("Legal AI API: HTTP routes under %s (e.g. %shealth)", mount, mount)
     yield
 
 
@@ -50,3 +57,4 @@ prefix = settings.API_PREFIX.rstrip("/") or ""
 app.include_router(health.router, prefix=prefix)
 app.include_router(analysis.router, prefix=prefix)
 app.include_router(ingest.router, prefix=prefix)
+app.include_router(stats.router, prefix=prefix)

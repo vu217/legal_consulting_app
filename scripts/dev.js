@@ -58,6 +58,28 @@ function waitPort(port, host = "127.0.0.1", timeoutMs = 90000) {
   });
 }
 
+/** Best-effort stop Ollama so dev can start a clean `ollama serve`. */
+function killExistingOllama() {
+  if (isWin) {
+    try {
+      execSync("taskkill /IM ollama.exe /F", { stdio: "ignore", shell: true });
+    } catch {
+      /* not running */
+    }
+    try {
+      execSync("taskkill /IM Ollama.exe /F", { stdio: "ignore", shell: true });
+    } catch {
+      /* not running */
+    }
+  } else {
+    try {
+      execSync("pkill -9 ollama", { stdio: "ignore" });
+    } catch {
+      /* not running */
+    }
+  }
+}
+
 function copyRootPdfsToBackend() {
   const srcDir = path.join(root, "pdfs");
   const dstDir = path.join(backend, "pdfs");
@@ -105,6 +127,9 @@ async function main() {
         /* ignore */
       }
     }
+    if (!process.env.LEGAL_AI_SKIP_OLLAMA_BOOT) {
+      killExistingOllama();
+    }
   };
   process.on("SIGINT", () => {
     killAll();
@@ -122,6 +147,43 @@ async function main() {
 
   ensureBackendDeps();
   ensureFrontendDeps();
+
+  // Set LEGAL_AI_SKIP_OLLAMA_BOOT=1 if you share one Ollama with other projects.
+  if (!process.env.LEGAL_AI_SKIP_OLLAMA_BOOT) {
+    console.log("[dev] stopping any running Ollama processes…");
+    killExistingOllama();
+    console.log("[dev] starting ollama serve in a separate window…");
+    if (isWin) {
+      // Open Ollama in its own cmd window so its output doesn't mix with this terminal.
+      // Cleanup on SIGINT is handled by killExistingOllama() (taskkill by name).
+      const ollamaWin = spawn("cmd", ["/c", `start "Ollama Server" cmd /k ollama serve`], {
+        shell: true,
+        detached: true,
+        stdio: "ignore",
+      });
+      ollamaWin.unref();
+    } else {
+      const ollamaProc = spawn("ollama", ["serve"], {
+        cwd: root,
+        stdio: "inherit",
+        shell: false,
+      });
+      children.push(ollamaProc);
+      ollamaProc.on("error", (err) => {
+        console.error("[dev] Could not start ollama:", err.message);
+      });
+    }
+    try {
+      await waitPort(11434);
+    } catch {
+      console.error("[dev] Ollama did not open port 11434. Install Ollama and ensure it is on PATH.");
+      console.error("[dev] Or set LEGAL_AI_SKIP_OLLAMA_BOOT=1 if you start Ollama yourself.");
+      killAll();
+      process.exit(1);
+    }
+  } else {
+    console.log("[dev] LEGAL_AI_SKIP_OLLAMA_BOOT set — skipping Ollama kill/spawn.");
+  }
 
   console.log("[dev] docker compose up -d …");
   try {

@@ -6,12 +6,35 @@ from __future__ import annotations
 
 import re
 import subprocess
+import time
+import urllib.error
+import urllib.request
+from typing import Any, Callable
 
 from langchain_ollama import ChatOllama
 
 from app import settings
 from app.core.ollama_config import get_ollama_num_gpu
 from app.core.shared_retriever import retrieve_docs
+
+OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags"
+_FAST_MODEL_CACHE_TTL_SEC = 60.0
+_fast_model_cache: tuple[float, str] | None = None
+
+
+class AnalysisCancelled(Exception):
+    """Raised when the client disconnects or the user cancels between pipeline phases."""
+
+
+def check_ollama_reachable() -> None:
+    try:
+        with urllib.request.urlopen(OLLAMA_TAGS_URL, timeout=2) as resp:
+            if not (200 <= int(resp.status) < 300):
+                raise RuntimeError("unexpected status")
+    except Exception as e:
+        raise RuntimeError(
+            "The local AI server is not running. Start it with `ollama serve`, or run `npm run dev` to start the stack."
+        ) from e
 
 
 def _resolve_fast_model() -> str:
@@ -24,11 +47,32 @@ def _resolve_fast_model() -> str:
     return settings.LLM_MODEL
 
 
-_FAST_MODEL = _resolve_fast_model()
+def get_fast_model() -> str:
+    global _fast_model_cache
+    now = time.monotonic()
+    if _fast_model_cache is not None and (now - _fast_model_cache[0]) < _FAST_MODEL_CACHE_TTL_SEC:
+        return _fast_model_cache[1]
+    resolved = _resolve_fast_model()
+    _fast_model_cache = (now, resolved)
+    return resolved
 
 
 def _strip_thinking(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+def _emit(
+    progress: Callable[[str, dict[str, Any]], None] | None,
+    phase: str,
+    data: dict[str, Any] | None = None,
+) -> None:
+    if progress:
+        progress(phase, data or {})
+
+
+def _ensure_not_cancelled(should_cancel: Callable[[], bool] | None) -> None:
+    if should_cancel and should_cancel():
+        raise AnalysisCancelled()
 
 
 def _build_combined_prompt(query: str, docs: list) -> str:
@@ -192,10 +236,10 @@ def _build_agent_outputs(query: str, docs: list, sections: dict) -> dict:
     }
 
 
-def _run_combined_analysis(query: str, docs: list) -> dict:
+def _run_combined_analysis(query: str, docs: list, fast_model: str) -> dict:
     prompt = _build_combined_prompt(query, docs)
     fast_llm = ChatOllama(
-        model=_FAST_MODEL,
+        model=fast_model,
         num_predict=1200,
         temperature=0.3,
         num_ctx=2048,
@@ -254,10 +298,40 @@ Be direct, specific, and actionable. Write for a client who needs clarity."""
     return _strip_thinking(response.content)
 
 
-def run_analysis(query: str) -> dict:
-    docs = retrieve_docs(query, k=12)
-    agent_outputs = _run_combined_analysis(query, docs)
-    summary = _compile_summary(query, agent_outputs)
+def run_analysis(
+    query: str,
+    progress: Callable[[str, dict[str, Any]], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+) -> dict:
+    check_ollama_reachable()
+    k = 12
+    _emit(progress, "retrieve_start", {"k": k})
+    try:
+        docs = retrieve_docs(query, k=k)
+    except Exception as e:
+        _emit(progress, "phase_error", {"failed_phase": "retrieve", "detail": str(e)})
+        raise
+    _emit(progress, "retrieve_done", {"doc_count": len(docs)})
+
+    _ensure_not_cancelled(should_cancel)
+    fast_model = get_fast_model()
+    _emit(progress, "fast_llm_start", {"model": fast_model})
+    try:
+        agent_outputs = _run_combined_analysis(query, docs, fast_model)
+    except Exception as e:
+        _emit(progress, "phase_error", {"failed_phase": "fast_llm", "detail": str(e)})
+        raise
+    _emit(progress, "fast_llm_done", {})
+
+    _ensure_not_cancelled(should_cancel)
+    _emit(progress, "summary_llm_start", {"model": settings.LLM_MODEL})
+    try:
+        summary = _compile_summary(query, agent_outputs)
+    except Exception as e:
+        _emit(progress, "phase_error", {"failed_phase": "summary_llm", "detail": str(e)})
+        raise
+    _emit(progress, "summary_llm_done", {})
+
     win_prob = agent_outputs.get("winrate", {}).get("win_probability", 50)
     return {
         "query": query,
