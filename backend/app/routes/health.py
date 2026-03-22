@@ -12,7 +12,6 @@ from qdrant_client import QdrantClient
 
 from app import settings
 from app.debug_session_log import debug_log
-from app.routes.stats import compute_index_stats
 
 router = APIRouter(tags=["health"])
 
@@ -117,6 +116,3 @@ def public_config() -> dict[str, str]:
     return cfg
 
 
-@router.get("/index/stats", tags=["stats"])
-def index_stats() -> dict[str, Any]:
-    return compute_index_stats()

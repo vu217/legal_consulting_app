@@ -1,4 +1,4 @@
-"""Case analysis endpoint."""
+"""Case analysis endpoint with expanded intake fields."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app import settings
 from app.core.master_agent import AnalysisCancelled, run_analysis
 from app.debug_session_log import debug_log
 
@@ -20,41 +21,59 @@ _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analysis")
 
 class AnalysisRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=50_000)
+    court_type: str | None = Field(None, description="e.g. supreme_court, high_court, district_court")
+    case_type: str | None = Field(None, description="e.g. criminal, civil, constitutional")
+    case_context: str | None = Field(None, max_length=5000, description="Additional background")
+    desired_outcome: str | None = Field(None, max_length=500, description="e.g. acquittal, compensation")
+    uploaded_file_ids: list[str] = Field(default_factory=list, description="IDs from /ingest/case-upload")
+
+
+def _validate_enums(body: AnalysisRequest) -> None:
+    if body.court_type and body.court_type not in settings.VALID_COURT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid court_type '{body.court_type}'. Valid: {sorted(settings.VALID_COURT_TYPES)}",
+        )
+    if body.case_type and body.case_type not in settings.VALID_CASE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid case_type '{body.case_type}'. Valid: {sorted(settings.VALID_CASE_TYPES)}",
+        )
 
 
 @router.post("/analysis")
 async def analyze_case(body: AnalysisRequest) -> dict:
+    _validate_enums(body)
     q = body.query.strip()
     if not q:
         raise HTTPException(status_code=400, detail="query must not be empty")
-    # region agent log
     debug_log("H3", "analysis.py:analyze_case", "analysis_start", {"query_len": len(q)})
-    # endregion
     loop = asyncio.get_event_loop()
     try:
-        result = await loop.run_in_executor(_executor, run_analysis, q)
+        result = await loop.run_in_executor(
+            _executor,
+            lambda: run_analysis(
+                q,
+                court_type=body.court_type,
+                case_type=body.case_type,
+                case_context=body.case_context,
+                desired_outcome=body.desired_outcome,
+            ),
+        )
     except Exception as e:
-        # region agent log
         debug_log(
-            "H3",
-            "analysis.py:analyze_case",
-            "analysis_error",
+            "H3", "analysis.py:analyze_case", "analysis_error",
             {"exc_type": type(e).__name__, "exc_len": len(str(e))},
         )
-        # endregion
         raise HTTPException(status_code=502, detail=f"Analysis failed: {e!s}") from e
-    # region agent log
     debug_log(
-        "H3",
-        "analysis.py:analyze_case",
-        "analysis_ok",
+        "H3", "analysis.py:analyze_case", "analysis_ok",
         {
             "win_probability": result.get("win_probability"),
             "has_summary": bool(result.get("summary")),
             "similar_n": len((result.get("precedent") or {}).get("similar_cases") or []),
         },
     )
-    # endregion
     return result
 
 
@@ -68,6 +87,7 @@ def _sse_progress_put(loop: asyncio.AbstractEventLoop, aq: asyncio.Queue, phase:
 
 @router.post("/analysis/stream")
 async def analyze_case_stream(body: AnalysisRequest):
+    _validate_enums(body)
     q = body.query.strip()
     if not q:
         raise HTTPException(status_code=400, detail="query must not be empty")
@@ -83,7 +103,15 @@ async def analyze_case_stream(body: AnalysisRequest):
             _sse_progress_put(loop, aq, phase, data)
 
         try:
-            out = run_analysis(q, progress=progress, should_cancel=cancel_event.is_set)
+            out = run_analysis(
+                q,
+                court_type=body.court_type,
+                case_type=body.case_type,
+                case_context=body.case_context,
+                desired_outcome=body.desired_outcome,
+                progress=progress,
+                should_cancel=cancel_event.is_set,
+            )
             loop.call_soon_threadsafe(
                 aq.put_nowait,
                 {"type": "result", "payload": out},
