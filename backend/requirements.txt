@@ -1,0 +1,13 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.9
+langchain
+langgraph
+langchain-ollama
+langchain-qdrant
+langchain-community
+qdrant-client
+pymupdf>=1.23.0
+tabulate
+pandas
+python-dotenv

@@ -1,3 +1,10 @@
+"""
+Experimental LangGraph RAG prototype (not used by the FastAPI/React app).
+
+Uses Qdrant collection "rag_docs" — distinct from the main pipeline ("legal_cases").
+Prefer master_agent.py + shared_retriever.py for production flows.
+"""
+
 from typing import TypedDict, List
 from langgraph.graph import StateGraph
 from langgraph.graph import END

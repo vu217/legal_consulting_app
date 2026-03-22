@@ -1,0 +1,8 @@
+{
+  "name": "legal-ai",
+  "private": true,
+  "description": "Legal RAG app — React + FastAPI",
+  "scripts": {
+    "dev": "node scripts/dev.js"
+  }
+}

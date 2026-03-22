@@ -1,0 +1,254 @@
+.layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--bg);
+  border-right: 1px solid var(--border-soft);
+  padding: 1.25rem 1rem;
+  color: var(--muted);
+}
+
+.sidebar h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sidebar h3 {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.main {
+  flex: 1;
+  padding: 1.5rem 2rem;
+  max-width: 1400px;
+}
+
+.main h1 {
+  margin: 0 0 0.35rem;
+  font-size: 1.65rem;
+  font-weight: 500;
+}
+
+.sub {
+  color: var(--muted);
+  margin-bottom: 1.25rem;
+  line-height: 1.5;
+}
+
+textarea.query {
+  width: 100%;
+  min-height: 100px;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  resize: vertical;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+button.primary {
+  background: var(--btn);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 1.25rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--btn-hover);
+}
+
+button.primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+button.secondary {
+  background: #21262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+button.secondary:hover:not(:disabled) {
+  background: #30363d;
+}
+
+.hint {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin: 1.25rem 0;
+}
+
+.metric {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.metric label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.metric .val {
+  font-size: 28px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+@media (max-width: 960px) {
+  .layout {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.2rem 1.4rem;
+  margin-bottom: 1rem;
+}
+
+.card-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.6rem;
+}
+
+.card-body {
+  color: var(--body);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.case-pill {
+  display: inline-block;
+  background: #1f2937;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--accent-pill);
+  margin: 3px 6px 3px 0;
+}
+
+.badge-win {
+  background: #0d4a2a;
+  color: #4ade80;
+  border: 1px solid #16a34a;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.badge-loss {
+  background: #4a0d0d;
+  color: #f87171;
+  border: 1px solid #dc2626;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.badge-unk {
+  background: #1f2937;
+  color: #9ca3af;
+  border: 1px solid #374151;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.case-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+@media (max-width: 1100px) {
+  .case-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.empty-state {
+  text-align: center;
+  padding: 4rem 2rem;
+  color: var(--muted);
+}
+
+.empty-state .icon {
+  font-size: 48px;
+  margin-bottom: 1rem;
+}
+
+.err {
+  background: #3d1414;
+  border: 1px solid #7f1d1d;
+  color: #fecaca;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin-top: 1rem;
+  font-size: 14px;
+}
+
+.upload-list {
+  font-size: 12px;
+  margin-top: 0.5rem;
+  max-height: 120px;
+  overflow-y: auto;
+}
