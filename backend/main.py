@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
-from backend.routers import health, ingest, query
+from backend.routers import analysis, health, ingest, query
 from backend.services.graph_store import init_graph
 from backend.services.qdrant_client import init_qdrant
 from backend.services.ollama_client import check_ollama_health
@@ -60,9 +60,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(health.router)
-app.include_router(ingest.router)
-app.include_router(query.router)
+API_PREFIX = "/api"
+app.include_router(health.router, prefix=API_PREFIX)
+app.include_router(ingest.router, prefix=API_PREFIX)
+app.include_router(query.router, prefix=API_PREFIX)
+app.include_router(analysis.router, prefix=API_PREFIX)
 
 
 @app.get("/")

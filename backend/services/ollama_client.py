@@ -69,26 +69,34 @@ async def embed_text(text: str) -> list[float]:
         return response.json()["embedding"]
 
 
-async def generate(prompt: str, system: str = "") -> str:
+async def generate(
+    prompt: str,
+    system: str = "",
+    model: str | None = None,
+    num_predict: int = 1500,
+    temperature: float = 0.1,
+    num_ctx: int = 2048,
+) -> str:
     """
     Single non-streaming LLM call.
-    Temperature 0.1, max 1500 tokens.
-    Full structured prompting logic added in Phase 4.
+    All parameters are overridable so the analysis pipeline can use
+    different models / token budgets for the fast-analysis vs summary stages.
     """
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=180) as client:
         response = await client.post(
             f"{settings.ollama_host}/api/chat",
             json={
-                "model": settings.llm_model,
+                "model": model or settings.llm_model,
                 "messages": messages,
                 "options": {
-                    "temperature": 0.1,
-                    "num_predict": 1500,
+                    "temperature": temperature,
+                    "num_predict": num_predict,
+                    "num_ctx": num_ctx,
                 },
                 "stream": False,
             },

@@ -96,17 +96,67 @@ function copyRootPdfsToBackend() {
   }
 }
 
+function triggerIngest() {
+  const http = require("http");
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      "http://127.0.0.1:8000/api/ingest",
+      { method: "POST", headers: { "Content-Type": "application/json" }, timeout: 300000 },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk) => { body += chunk; });
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(body);
+            json.ok = res.statusCode >= 200 && res.statusCode < 300;
+            resolve(json);
+          } catch {
+            resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, raw: body });
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("ingest request timed out")); });
+    req.end();
+  });
+}
+
 function ensureFrontendDeps() {
   if (fs.existsSync(path.join(frontend, "node_modules"))) return;
   console.log("[dev] installing frontend dependencies…");
   execSync(`"${npmCmd}" install`, { cwd: frontend, stdio: "inherit", shell: isWin });
 }
 
-function ensureBackendDeps() {
-  if (!fs.existsSync(py)) {
-    console.error(`[dev] Missing venv Python at ${py}. Create .venv and pip install -r backend/requirements.txt`);
+function findSystemPython() {
+  const candidates = isWin ? ["python", "python3", "py"] : ["python3", "python"];
+  for (const cmd of candidates) {
+    try {
+      const out = execSync(`"${cmd}" --version`, { stdio: "pipe", shell: true }).toString().trim();
+      if (out.startsWith("Python 3")) return cmd;
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+function ensureVenv() {
+  if (fs.existsSync(py)) return;
+  console.log("[dev] Python virtual environment not found. Creating .venv …");
+  const sysPy = findSystemPython();
+  if (!sysPy) {
+    console.error("[dev] No Python 3 found on PATH. Install Python 3.10+ and try again.");
     process.exit(1);
   }
+  console.log(`[dev] Using system Python: ${sysPy}`);
+  execSync(`"${sysPy}" -m venv .venv`, { cwd: root, stdio: "inherit", shell: true });
+  if (!fs.existsSync(py)) {
+    console.error("[dev] venv creation succeeded but python executable not found at expected path.");
+    process.exit(1);
+  }
+  console.log("[dev] .venv created successfully.");
+}
+
+function ensureBackendDeps() {
   try {
     execSync(`"${py}" -c "import fastapi"`, { stdio: "pipe" });
   } catch {
@@ -115,36 +165,90 @@ function ensureBackendDeps() {
   }
 }
 
+function readEnvModels() {
+  const envPath = path.join(root, ".env");
+  const models = new Set();
+  if (!fs.existsSync(envPath)) return ["nomic-embed-text", "qwen2.5:3b"];
+  const lines = fs.readFileSync(envPath, "utf8").split("\n");
+  for (const line of lines) {
+    const m = line.match(/^(EMBED_MODEL|LLM_MODEL|FAST_LLM_MODEL)\s*=\s*(.+)/);
+    if (m) models.add(m[2].trim());
+  }
+  return models.size ? [...models] : ["nomic-embed-text", "qwen2.5:3b"];
+}
+
+function ensureOllamaModels() {
+  const needed = readEnvModels();
+  let installed = [];
+  try {
+    const out = execSync("ollama list", { stdio: "pipe", shell: true }).toString();
+    installed = out.split("\n").map((l) => l.split(/\s+/)[0]).filter(Boolean);
+  } catch {
+    console.warn("[dev] could not list Ollama models — will attempt pulls anyway.");
+  }
+
+  for (const model of needed) {
+    const found = installed.some((m) => m === model || m.startsWith(model + ":") || model.includes(":") && m === model.split(":")[0]);
+    if (found) {
+      console.log(`[dev] Ollama model '${model}' ✓ already available`);
+    } else {
+      console.log(`[dev] Pulling Ollama model '${model}' — this may take a few minutes on first run …`);
+      try {
+        execSync(`ollama pull ${model}`, { stdio: "inherit", shell: true });
+        console.log(`[dev] '${model}' pulled successfully.`);
+      } catch (e) {
+        console.error(`[dev] Failed to pull '${model}': ${e.message}`);
+        console.error("[dev] You can pull it manually later: ollama pull " + model);
+      }
+    }
+  }
+}
+
 async function main() {
   debugDevLog("npm_run_dev_enter", { root });
   const children = [];
 
-  const killAll = () => {
+  let shuttingDown = false;
+
+  const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log("\n[dev] Shutting down …");
+
+    // 1. Kill spawned child processes (uvicorn, vite)
     for (const c of children) {
       try {
-        c.kill("SIGTERM");
-      } catch {
-        /* ignore */
-      }
+        if (c.pid) {
+          if (isWin) {
+            // /T kills the entire process tree (uvicorn reload children, node sub-procs)
+            execSync(`taskkill /PID ${c.pid} /T /F`, { stdio: "ignore", shell: true });
+          } else {
+            process.kill(-c.pid, "SIGTERM");
+          }
+        }
+      } catch { /* already dead */ }
     }
+
+    // 2. Stop Ollama (if we started it)
     if (!process.env.LEGAL_AI_SKIP_OLLAMA_BOOT) {
+      console.log("[dev] stopping Ollama …");
       killExistingOllama();
     }
+
+    // 3. Stop Qdrant Docker container
+    console.log("[dev] stopping Qdrant container …");
+    try {
+      execSync("docker compose down", { cwd: root, stdio: "ignore", timeout: 15000 });
+    } catch { /* docker may not be available or already stopped */ }
+
+    console.log("[dev] all services stopped. Goodbye.");
   };
-  process.on("SIGINT", () => {
-    killAll();
-    process.exit(0);
-  });
-  process.on("SIGTERM", () => {
-    killAll();
-    process.exit(0);
-  });
 
-  if (!fs.existsSync(py)) {
-    console.error(`[dev] No venv found. Run: python -m venv .venv && .venv\\Scripts\\pip install -r backend\\requirements.txt`);
-    process.exit(1);
-  }
+  process.on("SIGINT", () => { shutdown(); process.exit(0); });
+  process.on("SIGTERM", () => { shutdown(); process.exit(0); });
+  process.on("exit", shutdown);
 
+  ensureVenv();
   ensureBackendDeps();
   ensureFrontendDeps();
 
@@ -185,6 +289,9 @@ async function main() {
     console.log("[dev] LEGAL_AI_SKIP_OLLAMA_BOOT set — skipping Ollama kill/spawn.");
   }
 
+  console.log("[dev] checking Ollama models …");
+  ensureOllamaModels();
+
   console.log("[dev] docker compose up -d …");
   try {
     execSync(`docker compose up -d`, { cwd: root, stdio: "inherit" });
@@ -195,8 +302,8 @@ async function main() {
 
   await waitPort(6333);
 
-  const uvicorn = spawn(py, ["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"], {
-    cwd: backend,
+  const uvicorn = spawn(py, ["-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"], {
+    cwd: root,
     stdio: "inherit",
     shell: false,
   });
@@ -210,20 +317,17 @@ async function main() {
 
   copyRootPdfsToBackend();
 
-  // Spawn sync in the background so Vite (and the UI) are not blocked.
-  console.log("[dev] incremental PDF sync starting in background …");
-  const syncProc = spawn(py, ["-m", "app.core.sync_incremental"], {
-    cwd: backend,
-    stdio: "inherit",
-    shell: false,
-  });
-  children.push(syncProc);
-  syncProc.on("exit", (code) => {
-    if (code === 0 || code === null) {
-      console.log("[dev] incremental PDF sync finished.");
+  // Trigger incremental ingest via the running backend's API.
+  // Runs in the background so Vite startup isn't blocked.
+  console.log("[dev] triggering incremental PDF ingest via backend API …");
+  triggerIngest().then((res) => {
+    if (res.ok) {
+      console.log(`[dev] ingest done — processed: ${res.processed ?? 0}, skipped (unchanged): ${res.skipped ?? "all"}`);
     } else {
-      console.warn(`[dev] incremental PDF sync exited with code ${code} — check Ollama / Qdrant.`);
+      console.warn(`[dev] ingest request returned non-OK: ${res.detail || "unknown error"}`);
     }
+  }).catch((err) => {
+    console.warn(`[dev] ingest request failed (non-fatal): ${err.message}`);
   });
 
   const vite = spawn(npmCmd, ["run", "dev"], {
